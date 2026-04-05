@@ -1,0 +1,44 @@
+name: 🖥️ Windows VPS
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/5 * * * *'
+env:
+  TAILSCALE_AUTH_KEY: tskey-auth-kN15hVdZyD11CNTRL-xxui6m8VFYJE9cpQs5EPYJLP7baA6y4h4
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 360
+    steps:
+      - name: Enable RDP
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
+      - name: Set Password
+        run: |
+          $password = ConvertTo-SecureString "VPS@123456" -AsPlainText -Force
+          Set-LocalUser -Name "runneradmin" -Password $password
+      - name: Install Tailscale
+        run: |
+          $msi = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile $msi
+          Start-Process msiexec -ArgumentList "/i $msi /quiet /norestart" -Wait
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey="$env:TAILSCALE_AUTH_KEY" --hostname="vps-windows" --accept-routes
+          $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+          echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
+      - name: Install noVNC
+        run: |
+          mkdir C:\novnc
+          Set-Location C:\novnc
+          Invoke-WebRequest -Uri "https://codeload.github.com/novnc/noVNC/zip/refs/tags/v1.4.0" -OutFile "novnc.zip"
+          Expand-Archive -Path "novnc.zip" -DestinationPath "." -Force
+          Move-Item "noVNC-*/*" . -Force
+          netsh advfirewall firewall add rule name="noVNC" dir=in action=allow protocol=TCP localport=6080
+      - name: Start noVNC
+        run: |
+          Set-Location C:\novnc
+          Start-Process powershell -ArgumentList "python -m http.server 6080" -WindowStyle Hidden
+      - name: Keep Alive
+        run: |
+          $end = (Get-Date).AddHours(6)
+          while ((Get-Date) -lt $end) { Start-Sleep -Seconds 60 }
